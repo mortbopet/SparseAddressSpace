@@ -1,0 +1,3 @@
+[submodule "external/intervaltree"]
+	path = external/intervaltree
+	url = https://github.com/ekg/intervaltree.git
