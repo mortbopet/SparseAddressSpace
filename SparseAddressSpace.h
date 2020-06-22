@@ -73,7 +73,7 @@ public:
         }
     }
 
-    uint8_t readByte(T_addr address) {
+    uint8_t readByte(T_addr address) const {
         SegSPtr segment = segmentForAddress(address);
 
         // Perform read
@@ -83,7 +83,7 @@ public:
     }
 
     template <typename T_v>
-    T_v readValue(T_addr address) {
+    T_v readValue(T_addr address) const {
         T_v value = 0;
         for (unsigned i = 0; i < sizeof(T_v); i++)
             value |= readByte(address++) << (i * CHAR_BIT);
@@ -222,9 +222,15 @@ private:
     /**
      * @brief segmentForAddress
      * @returns a segment containing the requested byte address @param addr. If no segment is found, a new segment is
-     * created.
+     * created. segmentForAddress may create new segments if a segment is missing.
+     *
+     * As such, the physical state of the SAS may be modified in the function, however the logical state (which is an
+     * unrestricted address space) is maintained - hence, the function is marked const.
      */
-    SegSPtr segmentForAddress(T_addr addr) {
+    SegSPtr segmentForAddress(T_addr addr) const {
+        // Physical changes to the SAS are performed through a non-const pointer to this
+        auto* thisNonConst = const_cast<SparseAddressSpace<T_addr>*>(this);
+
         SegSPtr seg;
         // Initially, check if MRU segment is our target segment, to speed up spatial locality accesses. Else, traverse
         // the sparse array
@@ -235,11 +241,11 @@ private:
             return seg;
         } else {
             // No segment contains the requested address, create new segment and retry
-            createMissingSegment(addr);
+            thisNonConst->createMissingSegment(addr);
             return segmentForAddress(addr);
         }
 
-        setMRUSeg(seg);
+        thisNonConst->setMRUSeg(seg);
         return seg;
     }
 
