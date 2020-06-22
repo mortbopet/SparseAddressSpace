@@ -192,32 +192,6 @@ public:
         return segs;
     }
 
-    /**
-     * @brief coalesce
-     * Coalesce two segments, using values of @p s2 for any overlapping addresses between @p s1 and
-     * @p s2.
-     */
-    SegSPtr coalesce(SegSPtr s1, SegSPtr s2) {
-        if (s2->contains(*s1)) {
-            return s2;
-        }
-
-        // Coalesce lower
-        const int coalesce_lower_bytes = s2->start - s1->start;
-        if (coalesce_lower_bytes > 0) {
-            s2->data.insert(s2->data.begin(), s1->data.begin(), s1->data.begin() + coalesce_lower_bytes);
-            s2->start = s1->start;
-        }
-
-        // Coalesce upper
-        const int coalesce_upper_bytes = s1->end() - s2->end();
-        if (coalesce_upper_bytes > 0) {
-            s2->data.insert(s2->data.end(), s1->data.end() - coalesce_upper_bytes, s1->data.end());
-        }
-
-        return s2;
-    }
-
 private:
     /**
      * @brief segmentForAddress
@@ -305,6 +279,32 @@ private:
         if (m_mruSegment != ptr) {
             m_mruSegment = ptr;
         }
+    }
+
+    /**
+     * @brief coalesce
+     * Coalesce two segments, using values of @p s2 for any overlapping addresses between @p s1 and
+     * @p s2.
+     */
+    SegSPtr coalesce(SegSPtr s1, SegSPtr s2) {
+        if (s2->contains(*s1)) {
+            return s2;
+        }
+
+        // Coalesce lower
+        const int coalesce_lower_bytes = s2->start - s1->start;
+        if (coalesce_lower_bytes > 0) {
+            s2->data.insert(s2->data.begin(), s1->data.begin(), s1->data.begin() + coalesce_lower_bytes);
+            s2->start = s1->start;
+        }
+
+        // Coalesce upper
+        const int coalesce_upper_bytes = s1->end() - s2->end();
+        if (coalesce_upper_bytes > 0) {
+            s2->data.insert(s2->data.end(), s1->data.end() - coalesce_upper_bytes, s1->data.end());
+        }
+
+        return s2;
     }
 
     /**
