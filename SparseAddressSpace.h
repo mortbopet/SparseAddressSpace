@@ -175,11 +175,15 @@ public:
         setMRUSeg(segment);
     }
 
-    void insertSegment(const T_addr start, uint8_t* data, size_t n) {
-        Segment seg;
-        seg.start = start;
-        seg.data = std::vector(data, data + n);
-        insertSegment(seg);
+    void insertSegment(const T_addr startaddr, const std::vector<uint8_t>& data) {
+        auto s = std::make_shared<Segment>();
+        s->data = data;
+        s->start = startaddr;
+        insertSegment(s);
+    }
+
+    void insertSegment(const T_addr startaddr, uint8_t* data, size_t n) {
+        insertSegment(startaddr, std::vector<uint8_t>(data, data + n));
     }
 
     std::vector<SegWPtr> segments() const {
@@ -287,13 +291,8 @@ private:
             newstop = upper->start;
         }
 
-        // Create the new segment
-        auto s = std::make_shared<Segment>();
         const int segsize = newstop - newstart;
-        s->data = std::vector<uint8_t>(segsize, 0);
-        s->start = newstart;
-
-        insertSegment(s);
+        insertSegment(newstart, std::vector<uint8_t>(segsize, 0));
     }
 
     void setMRUSeg(SegSPtr ptr) {
