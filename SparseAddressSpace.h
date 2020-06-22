@@ -45,11 +45,12 @@ struct SparseAddressSpace {
 
     void write(T_addr address, uint8_t value) {
         if (contains(address)) {
-            std::vector<T_interval> results;
-            data.findContained(address, address, results);
-            auto& seg = results[0];
-            const size_t idx = address - seg->start;
-            seg->data[idx] = value;
+            std::vector<T_interval> results = data.findOverlapping(address, address);
+            assert(results.size() == 1);
+            auto& seg = results[0].value;
+            const int wridx = address - seg->start;
+            assert(wridx >= 0 && wridx < seg->data.size());
+            seg->data[wridx] = value;
         }
     }
 
@@ -79,11 +80,7 @@ struct SparseAddressSpace {
         return value;
     }
 
-    bool contains(uint32_t address) const {
-        std::vector<T_interval> results;
-        data.findContained(address, address, results);
-        return results.size() > 0;
-    }
+    bool contains(uint32_t address) const { return data.findOverlapping(address, address).size() > 0; }
 
     /**
      * @brief addInitializationMemory

@@ -111,3 +111,37 @@ TEST_CASE("Coalescing") {
         verifySegment(seg, s2_start, {{s2_val, s1_size}, {s1_val, s1_size}, {s3_val, s1_size}});
     }
 }
+
+TEST_CASE("Writing") {
+    static constexpr int s1_val = 1;
+    static constexpr int s1_size = 10;
+    static constexpr int s1_start = 100;
+    static constexpr int s2_val = 2;
+    static constexpr int s3_val = 3;
+
+    SAS sas;
+
+    auto s1 = std::make_shared<Seg>();
+    s1->data = std::vector<uint8_t>(s1_size, s1_val);
+    s1->start = s1_start;
+
+    sas.insertSegment(s1);
+    auto segs = sas.segments();
+    REQUIRE(segs.size() == 1);
+
+    SECTION("Write within segment") {
+        sas.write(s1_start + s1_size / 2, s2_val);
+
+        auto segs = sas.segments();
+        REQUIRE(segs.size() == 1);
+        auto& seg = segs[0];
+
+        verifySegment(seg, s1_start, {{s1_val, s1_size / 2}, {s2_val, 1}, {s1_val, s1_size / 2 - 1}});
+    }
+
+    SECTION("Write between segments (uncoalesced)") {}
+
+    SECTION("Write between segments (upper coalesce)") {}
+
+    SECTION("Write between segments (Adjacent coalesce from new segment)") {}
+}
