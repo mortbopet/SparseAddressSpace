@@ -4,7 +4,7 @@
 
 #include "external/intervaltree/IntervalTree.h"
 
-template <typename T_addr, typename T_v, size_t minSegSize = 4 /** Minimum segment size, in bytes */>
+template <typename T_addr, size_t minSegSize = 4 /** Minimum segment size, in bytes */>
 class SparseAddressSpace {
 public:
     struct Segment;
@@ -42,69 +42,60 @@ public:
     };
 
     SparseAddressSpace() {}
-    SparseAddressSpace(const T_addr startAddr, uint8_t* data, size_t n) { addInitArray(startAddr, data, n); }
-    SparseAddressSpace(const Segment& seg) { addInitArray(seg); }
+    SparseAddressSpace(const T_addr startAddr, uint8_t* data, size_t n) { insertSegment(startAddr, data, n); }
+    SparseAddressSpace(const Segment& seg) { insertSegment(seg); }
 
-    void write(T_addr address, uint8_t value) {
-        SegSPtr segment = segmentForAddress(address);
+    void writeByte(T_addr byteAddress, uint8_t value) {
+        SegSPtr segment = segmentForAddress(byteAddress);
 
         // Perform write
-        const int wridx = address - segment->start;
+        const int wridx = byteAddress - segment->start;
         assert(wridx >= 0 && wridx < segment->data.size());
         segment->data[wridx] = value;
-
-        setMRUSeg(segment);
     }
 
-    template <bool byteIndexed = true>
-    T_v read(T_addr address, unsigned width = 4) {
-        if constexpr (!byteIndexed)
-            address <<= 2;
-
-        T_v value = 0;
-        for (unsigned i = 0; i < width; i++)
-            value |= data[address++] << (i * CHAR_BIT);
-
-        return value;
-    }
-
-    template <bool byteIndexed = true>
-    T_v readMemConst(T_addr address, unsigned width = 4) const {
-        if constexpr (!byteIndexed)
-            address <<= 2;
-
-        T_v value = 0;
-        for (unsigned i = 0; i < width; i++) {
-            value |= contains(address) ? data.at(address) << (i * CHAR_BIT) : 0;
-            address++;
+    template <typename T_v>
+    void writeValue(T_addr byteAddress, T_v value) {
+        for (unsigned i = 0; i < sizeof(T_v); i++) {
+            writeByte(byteAddress++, value);
+            value >>= CHAR_BIT;
         }
+    }
+
+    uint8_t readByte(T_addr address) {
+        SegSPtr segment = segmentForAddress(address);
+
+        // Perform read
+        const int rdidx = address - segment->start;
+        assert(rdidx >= 0 && rdidx < segment->data.size());
+        return segment->data[rdidx];
+    }
+
+    template <typename T_v>
+    T_v readValue(T_addr address) {
+        T_v value = 0;
+        for (unsigned i = 0; i < sizeof(T_v); i++)
+            value |= readByte(address++) << (i * CHAR_BIT);
 
         return value;
     }
 
     bool contains(uint32_t address) const { return data.findOverlapping(address, address).size() > 0; }
 
-    /**
-     * @brief addInitializationMemory
-     * The specified program will be added as a memory segment which will be loaded into this memory
-     * once it is reset.
-     */
-    void addInitArray(const T_addr start, uint8_t* data, size_t n) {
-        auto seg = std::make_shared<Segment>();
-        seg->start = start;
-        seg->data = std::vector(data, data + n);
-        addInitArray(seg);
+    void addInitSegment(const Segment& other) {
+        if (!m_initData) {
+            m_initData = std::make_unique<SparseAddressSpace<T_addr>>();
+        }
+        m_initData.insertSegment(other);
     }
 
-    void addInitArray(const SparseAddressSpace& other) { initData.insertSegment(other); }
-
-    void clearInitArrays() { initData.clear(); }
+    void clearInitArrays() { m_initData.clear(); }
 
     void reset() {
         data.clear();
 
         // Deep copy all segments in the initialization data to the current data
-        initData.visit_all([=](const auto& interval) {
+        m_initData.visit_all([=](const auto& interval) {
             auto segCopy = std::make_unique<Segment>(interval->data);
             insertSegment(segCopy);
         });
@@ -157,6 +148,13 @@ public:
         setMRUSeg(segment);
     }
 
+    void insertSegment(const T_addr start, uint8_t* data, size_t n) {
+        Segment seg;
+        seg.start = start;
+        seg.data = std::vector(data, data + n);
+        addSegment(seg);
+    }
+
     std::vector<SegWPtr> segments() const {
         std::vector<SegWPtr> segs;
         data.visit_all([&](const auto& interval) { segs.emplace_back(interval.value); });
@@ -197,20 +195,24 @@ private:
      * created.
      */
     SegSPtr segmentForAddress(T_addr addr) {
+        SegSPtr seg;
         // Initially, check if MRU segment is our target segment, to speed up spatial locality accesses. Else, traverse
         // the sparse array
         if (m_mruSegment && m_mruSegment->contains(addr)) {
             // MRU access
-            return m_mruSegment;
+            seg = m_mruSegment;
         } else if (contains(addr)) {
             // A segment contains the requested address; find the segment and write to it
             std::vector<T_interval> results = data.findOverlapping(addr, addr);
             assert(results.size() == 1);
-            return results[0].value;
+            seg = results[0].value;
         } else {
             // No segment contains the requested address, create new segment
             throw std::runtime_error("Unimplemented");
         }
+
+        setMRUSeg(seg);
+        return seg;
     }
 
     void setMRUSeg(SegSPtr ptr) {
@@ -220,10 +222,10 @@ private:
     }
 
     /**
-     * @brief initData
+     * @brief m_initData
      * Set of SAS structures representing the segments which will be written to this SAS upon datastructure reset.
      */
-    std::vector<SparseAddressSpace> initData;
+    std::unique_ptr<SparseAddressSpace<T_addr>> m_initData;
 
     /**
      * @brief data

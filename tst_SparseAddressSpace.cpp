@@ -3,7 +3,7 @@
 
 #include "SparseAddressSpace.h"
 
-typedef SparseAddressSpace<uint32_t, uint32_t> SAS;
+typedef SparseAddressSpace<uint32_t> SAS;
 typedef SAS::Segment Seg;
 
 void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, int>> expected) {
@@ -11,13 +11,17 @@ void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, 
     REQUIRE(seg.lock()->start == start);
 
     auto& data = seg.lock()->data;
-    int i = 0;
+    size_t i = 0;
     while (!expected.empty()) {
         std::pair<int, int> verifying = expected[0];
         expected.erase(expected.begin());
 
         int cnt = 0;
         while (cnt++ < verifying.second) {
+            if (i >= data.size()) {
+                std::string failString = "Segment smaller than expected";
+                FAIL(failString);
+            }
             if (data[i] != verifying.first) {
                 std::string failString = "Segment verification failed. i: " + std::to_string(i) +
                                          "\texpected: " + std::to_string(verifying.first) +
@@ -110,12 +114,13 @@ TEST_CASE("Coalescing") {
     }
 }
 
-TEST_CASE("Writing") {
+TEST_CASE("Read/write") {
     static constexpr int s1_val = 1;
-    static constexpr int s1_size = 10;
+    static constexpr int s1_size = 20;
     static constexpr int s1_start = 100;
     static constexpr int s2_val = 2;
     static constexpr int s3_val = 3;
+    static constexpr uint32_t deadbeef = 0xDEADBEEF;
 
     SAS sas;
 
@@ -126,16 +131,33 @@ TEST_CASE("Writing") {
     sas.insertSegment(s1);
     getExpectedSingleSegment(sas);
 
-    SECTION("Write within segment") {
-        sas.write(s1_start + s1_size / 2, s2_val);
+    SECTION("Read/write within segment") {
+        sas.writeByte(s1_start + s1_size / 2, s2_val);
         auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s1_start, {{s1_val, s1_size / 2}, {s2_val, 1}, {s1_val, s1_size / 2 - 1}});
     }
 
-    SECTION("Write between segments (uncoalesced)") {}
+    SECTION("Read/write between segments (uncoalesced)") {}
 
-    SECTION("Write between segments (upper coalesce)") {}
+    SECTION("Read/write between segments (upper coalesce)") {}
 
-    SECTION("Write between segments (Adjacent coalesce from new segment)") {}
+    SECTION("Read/write between segments (Adjacent coalesce from new segment)") {}
+
+    SECTION("Read/write non-byte") {
+        const uint32_t addr = s1_start + s1_size / 2;
+        sas.writeValue(addr, deadbeef);
+        auto seg = getExpectedSingleSegment(sas);
+
+        REQUIRE(sas.readValue<uint32_t>(addr) == deadbeef);
+
+        // Verify surrounding bytes
+        verifySegment(seg, s1_start,
+                      {{s1_val, s1_size / 2},
+                       {(deadbeef & 0xFF), 1},
+                       {((deadbeef >> 8) & 0xFF), 1},
+                       {((deadbeef >> 16) & 0xFF), 1},
+                       {((deadbeef >> 24) & 0xFF), 1},
+                       {s1_val, s1_size / 2 - sizeof(deadbeef)}});
+    }
 }
