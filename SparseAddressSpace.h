@@ -2,20 +2,23 @@
 #include <set>
 #include <vector>
 
+#include <limits.h>
+
 #include "external/intervaltree/IntervalTree.h"
 
-template <typename T_addr, size_t minSegSize = 4 /** Minimum segment size, in bytes */>
+template <typename T_addr, size_t t_minSegSize = 5>
 class SparseAddressSpace {
 public:
     struct Segment;
     using SegSPtr = std::shared_ptr<Segment>;
     using SegWPtr = std::weak_ptr<Segment>;
     using T_interval = Interval<size_t, SegSPtr>;
+    using IntervalVector = std::vector<T_interval>;
     using Range = std::pair<size_t, size_t>;
 
     /**
      * @brief The Segment struct
-     * Represents a section of contiguous memory within the address space.
+     * Represents a segment of contiguous memory within the address space.
      */
     struct Segment : public std::enable_shared_from_this<Segment> {
         Segment() {}
@@ -36,14 +39,15 @@ public:
          * @returns an interval object of the given segment. Note that the end of the interval will point to the address
          * after the end() address. This is done to aid in coalescing adjacent blocks.
          */
-        T_interval toInterval() { return T_interval(start, end() + 1, shared_from_this()); }
+        T_interval toInterval() { return T_interval(start, end() + 1, this->shared_from_this()); }
         bool operator==(const Segment& other) const { return start == other.start && data == other.data; }
         std::vector<uint8_t> data;
     };
 
-    SparseAddressSpace() {}
-    SparseAddressSpace(const T_addr startAddr, uint8_t* data, size_t n) { insertSegment(startAddr, data, n); }
-    SparseAddressSpace(const Segment& seg) { insertSegment(seg); }
+    SparseAddressSpace(const unsigned minSegSize = 5) : m_minSegSize(minSegSize) {
+        assert(t_minSegSize % 2 == 1 && "t_minSegSize must be an uneven value");
+        assert(t_minSegSize >= 3 && "t_minSegSize must be at least 3");
+    }
 
     void writeByte(T_addr byteAddress, uint8_t value) {
         SegSPtr segment = segmentForAddress(byteAddress);
@@ -56,7 +60,8 @@ public:
 
     template <typename T_v>
     void writeValue(T_addr byteAddress, T_v value) {
-        for (unsigned i = 0; i < sizeof(T_v); i++) {
+        const size_t bytes = sizeof(T_v);
+        for (unsigned i = 0; i < bytes; i++) {
             writeByte(byteAddress++, value);
             value >>= CHAR_BIT;
         }
@@ -80,7 +85,23 @@ public:
         return value;
     }
 
-    bool contains(uint32_t address) const { return data.findOverlapping(address, address).size() > 0; }
+    SegSPtr contains(uint32_t address) const {
+        auto& overlapping = data.findOverlapping(address, address);
+
+        if (overlapping.size() == 0) {
+            return false;
+        }
+
+        assert(overlapping.size() == 1);
+
+        // Query the overlapping segment for whether contains the address. This is to avoid an off-by-1 error wherein
+        // the interval of a segment is inclusive of the address of the first byte after the last byte in the segment.
+        SegSPtr seg = overlapping[0].value;
+        if (seg->contains(address)) {
+            return seg;
+        }
+        return SegSPtr();
+    }
 
     void addInitSegment(const Segment& other) {
         if (!m_initData) {
@@ -152,7 +173,7 @@ public:
         Segment seg;
         seg.start = start;
         seg.data = std::vector(data, data + n);
-        addSegment(seg);
+        insertSegment(seg);
     }
 
     std::vector<SegWPtr> segments() const {
@@ -171,18 +192,17 @@ public:
             return s2;
         }
 
-        // Figure out how much to coalesce from s1 lower and upper
-        const int coalesce_n_bytes = s2->start - s1->start;
-
         // Coalesce lower
-        if (coalesce_n_bytes > 0) {
-            s2->data.insert(s2->data.begin(), s1->data.begin(), s1->data.begin() + std::abs(coalesce_n_bytes));
+        const int coalesce_lower_bytes = s2->start - s1->start;
+        if (coalesce_lower_bytes > 0) {
+            s2->data.insert(s2->data.begin(), s1->data.begin(), s1->data.begin() + coalesce_lower_bytes);
             s2->start = s1->start;
         }
 
         // Coalesce upper
-        if (coalesce_n_bytes < 0) {
-            s2->data.insert(s2->data.end(), s1->data.end() - std::abs(coalesce_n_bytes), s1->data.end());
+        const int coalesce_upper_bytes = s1->end() - s2->end();
+        if (coalesce_upper_bytes > 0) {
+            s2->data.insert(s2->data.end(), s1->data.end() - coalesce_upper_bytes, s1->data.end());
         }
 
         return s2;
@@ -201,18 +221,73 @@ private:
         if (m_mruSegment && m_mruSegment->contains(addr)) {
             // MRU access
             seg = m_mruSegment;
-        } else if (contains(addr)) {
-            // A segment contains the requested address; find the segment and write to it
-            std::vector<T_interval> results = data.findOverlapping(addr, addr);
-            assert(results.size() == 1);
-            seg = results[0].value;
+        } else if (seg = contains(addr)) {
+            return seg;
         } else {
-            // No segment contains the requested address, create new segment
-            throw std::runtime_error("Unimplemented");
+            // No segment contains the requested address, create new segment and retry
+            createMissingSegment(addr);
+            return segmentForAddress(addr);
         }
 
         setMRUSeg(seg);
         return seg;
+    }
+
+    void createMissingSegment(T_addr addr) {
+        assert(!contains(addr));
+        std::vector<T_interval> intervals;
+        // Find near segments to the missing address
+        data.visit_near(addr, addr, [&](auto& interval) { intervals.emplace_back(interval); });
+
+        // Find closest upper and lower segments to the address
+        const T_interval* lower = nullptr;
+        const T_interval* upper = nullptr;
+
+        for (const auto& interval : intervals) {
+            if (interval.stop <= addr) {
+                if (!lower) {
+                    lower = &interval;
+                } else if (interval.stop > lower->stop) {
+                    lower = &interval;
+                }
+            }
+
+            if (interval.start > addr) {
+                if (!upper) {
+                    upper = &interval;
+                } else if (interval.start < upper->start) {
+                    upper = &interval;
+                }
+            }
+        }
+
+        // Create a segment centered at the requested address with size t_minSegSize. If such a new segment
+        // overlaps with the closest segments to the new segment, the new segment will adjusted accordingly (either
+        // truncated or shifted wrt. the center address). We ensure that the bounds of the new segment is adjusted to
+        // facilitate coalescing when inserted.
+        long long newstart = static_cast<long long>(addr) - m_minSegSize / 2;
+        newstart = newstart < 0 ? 0 : newstart;
+        long long newstop = addr + m_minSegSize / 2 + 1;
+
+        if (lower && lower->stop >= newstart) {
+            const int truncatedBytes = lower->stop - newstart;
+            newstart = lower->stop;
+
+            // Add the truncated bytes to the other end of the new segment
+            newstop += truncatedBytes;
+        }
+
+        if (upper && upper->start <= newstop) {
+            newstop = upper->start;
+        }
+
+        // Create the new segment
+        auto s = std::make_shared<Segment>();
+        const int segsize = newstop - newstart;
+        s->data = std::vector<uint8_t>(segsize, 0);
+        s->start = newstart;
+
+        insertSegment(s);
     }
 
     void setMRUSeg(SegSPtr ptr) {
@@ -239,4 +314,13 @@ private:
      * read/write to speed up accesses with spatial locality.
      */
     SegSPtr m_mruSegment;
+
+    /**
+     * @brief m_minSegSize
+     * Minimum segment size, in bytes.
+     * When an address which is not contained within any segment is accessed, a new segment is created around the
+     * address. This segment will (assuming no conflicts with adjacent segments, see createMissingSegment) have
+     * m_minSegSize width, centerred around the requested address.
+     */
+    const unsigned m_minSegSize;
 };
