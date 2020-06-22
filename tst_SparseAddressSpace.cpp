@@ -70,22 +70,15 @@ TEST_CASE("Test top") {
     static constexpr uint32_t deadbeef = 0xDEADBEEF;
 
     SAS sas;
+    addSegment(sas, s1_start, s1_size, s1_val);
 
-    auto s1 = std::make_shared<Seg>();
-    s1->data = std::vector<uint8_t>(s1_size, s1_val);
-    s1->start = s1_start;
-
-    sas.insertSegment(s1);
     getExpectedSingleSegment(sas);
 
     SECTION("Coalescing") {
         SECTION("Fully contained coalescing") {
-            auto s2 = std::make_shared<Seg>();
             const int s2_size = s1_size + 2;
-            s2->data = std::vector<uint8_t>(s2_size, s2_val);
             const auto s2_start = s1_start - 1;
-            s2->start = s2_start;
-            sas.insertSegment(s2);
+            addSegment(sas, s2_start, s2_size, s2_val);
 
             // Only a single segment should be left and only 2's should be present (s1 has been fully overwritten)
             auto seg = getExpectedSingleSegment(sas);
@@ -94,11 +87,8 @@ TEST_CASE("Test top") {
         }
 
         SECTION("Lower coalescing") {
-            auto s2 = std::make_shared<Seg>();
-            s2->data = std::vector<uint8_t>(s1_size, s2_val);
             const uint32_t s2_start = s1_start + s1_size / 2;
-            s2->start = s2_start;
-            sas.insertSegment(s2);
+            addSegment(sas, s2_start, s1_size, s2_val);
 
             // Only a single segment should be present due to coalescing. Segment starts with 1's and ends with 2's
             auto seg = getExpectedSingleSegment(sas);
@@ -107,11 +97,8 @@ TEST_CASE("Test top") {
         }
 
         SECTION("Upper coalescing") {
-            auto s2 = std::make_shared<Seg>();
-            s2->data = std::vector<uint8_t>(s1_size, s2_val);
             const uint32_t s2_start = s1_start - s1_size / 2;
-            s2->start = s2_start;
-            sas.insertSegment(s2);
+            addSegment(sas, s2_start, s1_size, s2_val);
 
             // Only a single segment should be present due to coalescing. Segment starts with 1's and ends with 2's
             auto seg = getExpectedSingleSegment(sas);
@@ -120,17 +107,11 @@ TEST_CASE("Test top") {
         }
 
         SECTION("Adjacent coalescing") {
-            auto s2 = std::make_shared<Seg>();
-            s2->data = std::vector<uint8_t>(s1_size, s2_val);
             const uint32_t s2_start = s1_start - s1_size;
-            s2->start = s2_start;
-            sas.insertSegment(s2);
+            addSegment(sas, s2_start, s1_size, s2_val);
 
-            auto s3 = std::make_shared<Seg>();
-            s3->data = std::vector<uint8_t>(s1_size, s3_val);
             const uint32_t s3_start = s1_start + s1_size;
-            s3->start = s3_start;
-            sas.insertSegment(s3);
+            addSegment(sas, s3_start, s1_size, s3_val);
 
             auto seg = getExpectedSingleSegment(sas);
 
@@ -172,11 +153,8 @@ TEST_CASE("Test top") {
         addSegment(sas, s1_start * 9 / 4, s1_size / 4, 5);
 
         SECTION("Uninitialized value-access between segments") {
-            auto s2 = std::make_shared<Seg>();
-            s2->data = std::vector<uint8_t>(s1_size, s2_val);
             const uint32_t s2_start = s1_start + 2 * s1_size;
-            s2->start = s2_start;
-            sas.insertSegment(s2);
+            addSegment(sas, s2_start, s1_size, s2_val);
 
             const uint32_t addr = static_cast<uint32_t>(s1_start + s1_size * 1.5);
             sas.writeValue(addr, s1_val);
