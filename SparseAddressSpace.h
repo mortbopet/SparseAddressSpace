@@ -8,6 +8,10 @@
 
 #include "external/intervaltree/IntervalTree.h"
 
+#ifdef USE_SAS_NAMESPACE
+namespace sas {
+#endif
+
 template <typename T_addr, size_t t_minSegSize = 5>
 class SparseAddressSpace {
 public:
@@ -326,3 +330,7 @@ private:
      */
     const unsigned m_minSegSize;
 };
+
+#ifdef USE_SAS_NAMESPACE
+}
+#endif
