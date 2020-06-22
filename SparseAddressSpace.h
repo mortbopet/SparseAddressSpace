@@ -12,7 +12,7 @@
 namespace sas {
 #endif
 
-template <typename T_addr, size_t t_minSegSize = 5>
+template <typename T_addr>
 class SparseAddressSpace {
 public:
     struct Segment;
@@ -51,8 +51,8 @@ public:
     };
 
     SparseAddressSpace(const unsigned minSegSize = 5) : m_minSegSize(minSegSize) {
-        assert(t_minSegSize % 2 == 1 && "t_minSegSize must be an uneven value");
-        assert(t_minSegSize >= 3 && "t_minSegSize must be at least 3");
+        assert(m_minSegSize % 2 == 1 && "m_minSegSize must be an uneven value");
+        assert(m_minSegSize >= 3 && "m_minSegSize must be at least 3");
     }
 
     void writeByte(T_addr byteAddress, uint8_t value) {
@@ -271,7 +271,7 @@ private:
             }
         }
 
-        // Create a segment centered at the requested address with size t_minSegSize. If such a new segment
+        // Create a segment centered at the requested address with size m_minSegSize. If such a new segment
         // overlaps with the closest segments to the new segment, the new segment will adjusted accordingly (either
         // truncated or shifted wrt. the center address). We ensure that the bounds of the new segment is adjusted to
         // facilitate coalescing when inserted.

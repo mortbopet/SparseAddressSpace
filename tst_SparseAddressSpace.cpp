@@ -6,7 +6,7 @@
 #include "SparseAddressSpace.h"
 
 static constexpr int s_minsegsize = 5;
-using SAS = SparseAddressSpace<uint32_t, s_minsegsize>;
+using SAS = SparseAddressSpace<uint32_t>;
 using Seg = SAS::Segment;
 
 void addSegment(SAS& sas, uint32_t start, size_t size, int value) {
@@ -69,7 +69,7 @@ TEST_CASE("Test top") {
     static constexpr int s3_val = 3;
     static constexpr uint32_t deadbeef = 0xDEADBEEF;
 
-    SAS sas;
+    SAS sas(s_minsegsize);
     addSegment(sas, s1_start, s1_size, s1_val);
 
     getExpectedSingleSegment(sas);
