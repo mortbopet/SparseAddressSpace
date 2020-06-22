@@ -7,6 +7,7 @@ typedef SparseAddressSpace<uint32_t, uint32_t> SAS;
 typedef SAS::Segment Seg;
 
 void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, int>> expected) {
+    REQUIRE(!seg.expired());
     REQUIRE(seg.lock()->start == start);
 
     auto& data = seg.lock()->data;
@@ -28,6 +29,12 @@ void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, 
     }
 }
 
+SAS::SegWPtr getExpectedSingleSegment(SAS& sas) {
+    auto segs = sas.segments();
+    REQUIRE(segs.size() == 1);
+    return segs[0];
+}
+
 TEST_CASE("Coalescing") {
     static constexpr int s1_val = 1;
     static constexpr int s1_size = 10;
@@ -42,8 +49,7 @@ TEST_CASE("Coalescing") {
     s1->start = s1_start;
 
     sas.insertSegment(s1);
-    auto segs = sas.segments();
-    REQUIRE(segs.size() == 1);
+    getExpectedSingleSegment(sas);
 
     SECTION("Fully contained coalescing") {
         auto s2 = std::make_shared<Seg>();
@@ -54,9 +60,7 @@ TEST_CASE("Coalescing") {
         sas.insertSegment(s2);
 
         // Only a single segment should be left and only 2's should be present (s1 has been fully overwritten)
-        auto segs = sas.segments();
-        REQUIRE(segs.size() == 1);
-        auto& seg = segs[0];
+        auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s2_start, {{s2_val, s2_size}});
     }
@@ -69,9 +73,7 @@ TEST_CASE("Coalescing") {
         sas.insertSegment(s2);
 
         // Only a single segment should be present due to coalescing. Segment starts with 1's and ends with 2's
-        auto segs = sas.segments();
-        REQUIRE(segs.size() == 1);
-        auto& seg = segs[0];
+        auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s1_start, {{s1_val, s1_size / 2}, {s2_val, s1_size}});
     }
@@ -84,9 +86,7 @@ TEST_CASE("Coalescing") {
         sas.insertSegment(s2);
 
         // Only a single segment should be present due to coalescing. Segment starts with 1's and ends with 2's
-        auto segs = sas.segments();
-        REQUIRE(segs.size() == 1);
-        auto& seg = segs[0];
+        auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s2_start, {{s2_val, s1_size}, {s1_val, s1_size / 2}});
     }
@@ -104,9 +104,7 @@ TEST_CASE("Coalescing") {
         s3->start = s3_start;
         sas.insertSegment(s3);
 
-        auto segs = sas.segments();
-        REQUIRE(segs.size() == 1);
-        auto& seg = segs[0];
+        auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s2_start, {{s2_val, s1_size}, {s1_val, s1_size}, {s3_val, s1_size}});
     }
@@ -126,15 +124,11 @@ TEST_CASE("Writing") {
     s1->start = s1_start;
 
     sas.insertSegment(s1);
-    auto segs = sas.segments();
-    REQUIRE(segs.size() == 1);
+    getExpectedSingleSegment(sas);
 
     SECTION("Write within segment") {
         sas.write(s1_start + s1_size / 2, s2_val);
-
-        auto segs = sas.segments();
-        REQUIRE(segs.size() == 1);
-        auto& seg = segs[0];
+        auto seg = getExpectedSingleSegment(sas);
 
         verifySegment(seg, s1_start, {{s1_val, s1_size / 2}, {s2_val, 1}, {s1_val, s1_size / 2 - 1}});
     }

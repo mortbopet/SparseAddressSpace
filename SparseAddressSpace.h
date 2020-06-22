@@ -5,7 +5,8 @@
 #include "external/intervaltree/IntervalTree.h"
 
 template <typename T_addr, typename T_v, size_t minSegSize = 4 /** Minimum segment size, in bytes */>
-struct SparseAddressSpace {
+class SparseAddressSpace {
+public:
     struct Segment;
     using SegSPtr = std::shared_ptr<Segment>;
     using SegWPtr = std::weak_ptr<Segment>;
@@ -27,7 +28,8 @@ struct SparseAddressSpace {
          * @brief end: address of the last byte in this segment
          */
         inline T_addr end() const { return start + data.size() - 1; }
-        bool contains(const Segment& other) const { return start <= other.start && end() >= other.end(); }
+        inline bool contains(const Segment& other) const { return start <= other.start && end() >= other.end(); }
+        inline bool contains(const T_addr addr) const { return start <= addr && addr <= end(); }
 
         /**
          * @brief toInterval
@@ -44,14 +46,14 @@ struct SparseAddressSpace {
     SparseAddressSpace(const Segment& seg) { addInitArray(seg); }
 
     void write(T_addr address, uint8_t value) {
-        if (contains(address)) {
-            std::vector<T_interval> results = data.findOverlapping(address, address);
-            assert(results.size() == 1);
-            auto& seg = results[0].value;
-            const int wridx = address - seg->start;
-            assert(wridx >= 0 && wridx < seg->data.size());
-            seg->data[wridx] = value;
-        }
+        SegSPtr segment = segmentForAddress(address);
+
+        // Perform write
+        const int wridx = address - segment->start;
+        assert(wridx >= 0 && wridx < segment->data.size());
+        segment->data[wridx] = value;
+
+        setMRUSeg(segment);
     }
 
     template <bool byteIndexed = true>
@@ -152,6 +154,7 @@ struct SparseAddressSpace {
         // Rebuild the interval tree with the new set of (coalesced) intervals. std::move is used due to the r-value
         // reference constraint of the IntervalTree constructor
         data = IntervalTree<size_t, SegSPtr>(std::move(segmentsToKeepVec));
+        setMRUSeg(segment);
     }
 
     std::vector<SegWPtr> segments() const {
@@ -187,6 +190,35 @@ struct SparseAddressSpace {
         return s2;
     }
 
+private:
+    /**
+     * @brief segmentForAddress
+     * @returns a segment containing the requested byte address @param addr. If no segment is found, a new segment is
+     * created.
+     */
+    SegSPtr segmentForAddress(T_addr addr) {
+        // Initially, check if MRU segment is our target segment, to speed up spatial locality accesses. Else, traverse
+        // the sparse array
+        if (m_mruSegment && m_mruSegment->contains(addr)) {
+            // MRU access
+            return m_mruSegment;
+        } else if (contains(addr)) {
+            // A segment contains the requested address; find the segment and write to it
+            std::vector<T_interval> results = data.findOverlapping(addr, addr);
+            assert(results.size() == 1);
+            return results[0].value;
+        } else {
+            // No segment contains the requested address, create new segment
+            throw std::runtime_error("Unimplemented");
+        }
+    }
+
+    void setMRUSeg(SegSPtr ptr) {
+        if (m_mruSegment != ptr) {
+            m_mruSegment = ptr;
+        }
+    }
+
     /**
      * @brief initData
      * Set of SAS structures representing the segments which will be written to this SAS upon datastructure reset.
@@ -198,4 +230,11 @@ struct SparseAddressSpace {
      * Interval tree representing the currently active segments in the address space.
      */
     IntervalTree<size_t, SegSPtr> data;
+
+    /**
+     * @brief m_mruSegment
+     * Pointer to the most recently accessed segment in the address space. This segment will be checked on each
+     * read/write to speed up accesses with spatial locality.
+     */
+    SegSPtr m_mruSegment;
 };
