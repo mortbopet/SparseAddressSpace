@@ -237,7 +237,7 @@ private:
         assert(!contains(addr));
         std::vector<T_interval> intervals;
         // Find near segments to the missing address
-        data.visit_near(addr, addr, [&](auto& interval) { intervals.emplace_back(interval); });
+        data.visit_all([&](auto& interval) { intervals.emplace_back(interval); });
 
         // Find closest upper and lower segments to the address
         const T_interval* lower = nullptr;
