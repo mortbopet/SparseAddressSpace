@@ -1,10 +1,20 @@
 #define CATCH_CONFIG_MAIN
 #include "external/Catch2/single_include/catch2/catch.hpp"
 
+#include <numeric>
+
 #include "SparseAddressSpace.h"
 
-using SAS = SparseAddressSpace<uint32_t>;
+static constexpr int s_minsegsize = 5;
+using SAS = SparseAddressSpace<uint32_t, s_minsegsize>;
 using Seg = SAS::Segment;
+
+void addSegment(SAS& sas, uint32_t start, size_t size, int value) {
+    auto s = std::make_shared<Seg>();
+    s->data = std::vector<uint8_t>(size, value);
+    s->start = start;
+    sas.insertSegment(s);
+}
 
 void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, int>> expected) {
     REQUIRE(!seg.expired());
@@ -37,6 +47,18 @@ SAS::SegWPtr getExpectedSingleSegment(SAS& sas) {
     auto segs = sas.segments();
     REQUIRE(segs.size() == 1);
     return segs[0];
+}
+
+SAS::SegWPtr getSegmentAtAddr(SAS& sas, uint32_t addr) {
+    SAS::SegWPtr ptr;
+    for (const auto& seg : sas.segments()) {
+        if (seg.lock()->start == addr) {
+            ptr = seg.lock();
+            break;
+        }
+    }
+    REQUIRE(!ptr.expired());
+    return ptr;
 }
 
 TEST_CASE("Test top") {
@@ -145,7 +167,11 @@ TEST_CASE("Test top") {
     }
 
     SECTION("Read/write uninitialized") {
-        SECTION("Uninitialized access between segments (uncoalesced)") {
+        // Create additional lower and upper sections to populate the address space
+        addSegment(sas, s1_start / 4, s1_size / 4, 4);
+        addSegment(sas, s1_start * 9 / 4, s1_size / 4, 5);
+
+        SECTION("Uninitialized value-access between segments") {
             auto s2 = std::make_shared<Seg>();
             s2->data = std::vector<uint8_t>(s1_size, s2_val);
             const uint32_t s2_start = s1_start + 2 * s1_size;
