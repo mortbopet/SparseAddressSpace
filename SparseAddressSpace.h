@@ -12,32 +12,31 @@ struct SparseAddressSpace {
     using T_interval = Interval<size_t, SegSPtr>;
     using Range = std::pair<size_t, size_t>;
 
-    struct Segment {
+    /**
+     * @brief The Segment struct
+     * Represents a section of contiguous memory within the address space.
+     */
+    struct Segment : public std::enable_shared_from_this<Segment> {
         Segment() {}
 
+        /**
+         * @brief start: address of the first byte in this segment
+         */
         T_addr start;
-        inline T_addr end() const { return start + data.size(); }
-        bool contains(const Segment& other) const {
-            return start <= other.start && (start + data.size()) >= (other.start + other.data.size());
-        }
-        T_interval toInterval() { return T_interval(start, end(), toSharedPtr()); }
+        /**
+         * @brief end: address of the last byte in this segment
+         */
+        inline T_addr end() const { return start + data.size() - 1; }
+        bool contains(const Segment& other) const { return start <= other.start && end() >= other.end(); }
+
+        /**
+         * @brief toInterval
+         * @returns an interval object of the given segment. Note that the end of the interval will point to the address
+         * after the end() address. This is done to aid in coalescing adjacent blocks.
+         */
+        T_interval toInterval() { return T_interval(start, end() + 1, shared_from_this()); }
         bool operator==(const Segment& other) const { return start == other.start && data == other.data; }
         std::vector<uint8_t> data;
-
-        std::shared_ptr<Segment> toSharedPtr() {
-            if (!m_ptr.expired()) {
-                return std::shared_ptr(m_ptr);
-            } else {
-                // Local pointer is uninitialized...
-                auto shptr = std::shared_ptr<Segment>(this);
-                m_ptr = shptr;
-                return shptr;
-            }
-        }
-
-        // All references to this Segment is managed by a shared pointer pointing to m_ptr. m_ptr is a weak pointer, to
-        // ensure that this object itself does not maintain a reference to itself.
-        std::weak_ptr<Segment> m_ptr;
     };
 
     SparseAddressSpace() {}
@@ -133,8 +132,9 @@ struct SparseAddressSpace {
             segmentsToKeep.erase(i.value);
         }
 
-        // Coalesce any overlapping upper and lower segments into the new segment
-        const std::vector<T_addr> edges = {segment->start, static_cast<T_addr>(segment->end())};
+        // Coalesce any overlapping upper and lower segments into the new segment. Address segment->end() + 1 ensures
+        // coalescing of adjacent blocks
+        const std::vector<T_addr> edges = {segment->start, static_cast<T_addr>(segment->end() + 1)};
         for (T_addr edgeAddress : edges) {
             std::vector<T_interval> overlaps = data.findOverlapping(edgeAddress, edgeAddress);
             for (auto& i : overlaps) {
@@ -150,7 +150,7 @@ struct SparseAddressSpace {
         }
 
         // Insert (coalesced) new segment into segments to keep
-        segmentsToKeepVec.push_back({segment->start, segment->end(), segment});
+        segmentsToKeepVec.push_back(segment->toInterval());
 
         // Rebuild the interval tree with the new set of (coalesced) intervals. std::move is used due to the r-value
         // reference constraint of the IntervalTree constructor
@@ -190,7 +190,15 @@ struct SparseAddressSpace {
         return s2;
     }
 
+    /**
+     * @brief initData
+     * Set of SAS structures representing the segments which will be written to this SAS upon datastructure reset.
+     */
     std::vector<SparseAddressSpace> initData;
 
+    /**
+     * @brief data
+     * Interval tree representing the currently active segments in the address space.
+     */
     IntervalTree<size_t, SegSPtr> data;
 };
