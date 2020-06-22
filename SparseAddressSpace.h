@@ -92,21 +92,21 @@ public:
     }
 
     SegSPtr contains(uint32_t address) const {
-        auto& overlapping = data.findOverlapping(address, address);
+        auto overlapping = data.findOverlapping(address, address);
+
+        SegSPtr seg;
 
         if (overlapping.size() == 0) {
-            return false;
+            return seg;
         }
 
         assert(overlapping.size() == 1);
 
-        // Query the overlapping segment for whether contains the address. This is to avoid an off-by-1 error wherein
-        // the interval of a segment is inclusive of the address of the first byte after the last byte in the segment.
-        SegSPtr seg = overlapping[0].value;
-        if (seg->contains(address)) {
-            return seg;
-        }
-        return SegSPtr();
+        // Query the overlapping segment for whether contains the address. This is to avoid an off-by-1 error
+        // wherein the interval of a segment is inclusive of the address of the first byte after the last byte in
+        // the segment.
+        seg = overlapping[0].value;
+        return seg->contains(address) ? seg : SegSPtr();
     }
 
     void addInitSegment(const Segment& other) {
