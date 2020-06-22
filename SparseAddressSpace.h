@@ -41,7 +41,6 @@ struct SparseAddressSpace {
     };
 
     SparseAddressSpace() {}
-
     SparseAddressSpace(const T_addr startAddr, uint8_t* data, size_t n) { addInitArray(startAddr, data, n); }
     SparseAddressSpace(const Segment& seg) { addInitArray(seg); }
 
