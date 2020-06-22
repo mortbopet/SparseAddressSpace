@@ -154,12 +154,82 @@ TEST_CASE("Test top") {
 
             const uint32_t addr = static_cast<uint32_t>(s1_start + s1_size * 1.5);
             sas.writeValue(addr, s1_val);
-            auto seg = getExpectedSingleSegment(sas);
             REQUIRE(sas.readValue<uint32_t>(addr) == s1_val);
+
+            /* Having minimum segment size 5, we expect the new segment to have merged together with segment s2, as
+             * illustrated by the following:
+             * 'v' is our write pointer. We initially write at 115, which allocates a new segment of size 5 from
+             * 113-117. Subsequent iterations writes the following bytes of our 4-byte value. We see that in iteration
+             * 4, the write pointer accesses address 118, which prompts a new segment to be created.
+             * This new segment will subsequently be coalesced together with the initial 113-117 segment as well as the
+             * 120-... segment (s2).
+             *
+             *             addr: 110 *----*----*----* 120
+             * Iteration 1:             --v--  |---s2
+             * Iteration 2:             ---v-  |---s2
+             * Iteration 3:             ----v  |---s2
+             * Iteration 4:             -----v-|---s2
+             */
+
+            const uint32_t segstart = addr - s_minsegsize / 2;
+            auto seg = getSegmentAtAddr(sas, segstart);
+
+            verifySegment(seg, segstart,
+                          {{0, 2},
+                           {s1_val, 1},
+                           {((s1_val >> 8) & 0xFF), 1},
+                           {((s1_val >> 16) & 0xFF), 1},
+                           {((s1_val >> 24) & 0xFF), 1},
+                           {0, 1},
+                           {s2_val, s1_size}});
+        }
+    }
+}
+
+TEST_CASE("Fuzz test") {
+    // Fuzz-writes a large array, writing segments of the array in a random manner. Then, the sparse address space is
+    // sequentially read through to very that the array was written as expected. This is performed with SASs of
+    // different minimum segment sizes.
+
+    int datasize =
+        GENERATE(std::pow(2, 1), std::pow(2, 3), std::pow(2, 5), std::pow(2, 7), std::pow(2, 10), std::pow(2, 15));
+
+    // Min SS is based on the current data size. This is done to ensure that we are not testing very small minimum
+    // segments with very large datasets, which will result in a heavily fragmented address space that is slow to
+    // access.
+    int minss = datasize / 10;
+    minss = minss < 3 ? 3 : minss;
+    minss = minss % 2 == 0 ? minss + 1 : minss;
+
+    SECTION("Fuzzing") {
+        SAS sas(minss);
+        std::vector<uint8_t> data(datasize);
+        std::generate(data.begin(), data.end(), std::rand);
+
+        std::vector<int> idxsToWrite(datasize);
+        std::iota(idxsToWrite.begin(), idxsToWrite.end(), 0);
+
+        // Randomly write all data
+        while (!idxsToWrite.empty()) {
+            const int wrIdxToWrite = std::rand() % idxsToWrite.size();
+            const int idx = idxsToWrite[wrIdxToWrite];
+            sas.writeByte(idx, data[idx]);
+            idxsToWrite.erase(idxsToWrite.begin() + wrIdxToWrite);
         }
 
-        SECTION("Uninitialized access with coalescing") {}
+        // there should only be a single segment due to all randomly created segments having been coalesced
+        auto seg = getExpectedSingleSegment(sas);
 
-        SECTION("Uninitialized access with no coalescing") {}
+        // Sequentially read the data
+        for (int i = 0; i < datasize; i++) {
+            const uint32_t sasvalue = sas.readByte(i);
+            const uint32_t refvalue = data[i];
+
+            if (sasvalue != refvalue) {
+                FAIL("err");
+            }
+
+            REQUIRE(sasvalue == refvalue);
+        }
     }
 }
