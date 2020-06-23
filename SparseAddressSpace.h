@@ -36,7 +36,7 @@ public:
         /**
          * @brief end: address of the last byte in this segment
          */
-        inline T_addr end() const { return start + data.size() - 1; }
+        inline T_addr end() const { return static_cast<T_addr>(start + data.size() - 1); }
         inline bool contains(const Segment& other) const { return start <= other.start && end() >= other.end(); }
         inline bool contains(const T_addr addr) const { return start <= addr && addr <= end(); }
 
@@ -259,20 +259,20 @@ private:
         newstart = newstart < 0 ? 0 : newstart;
         long long newstop = addr + m_minSegSize / 2 + 1;
 
-        if (lower && lower->stop >= newstart) {
-            const int truncatedBytes = lower->stop - newstart;
+        if (lower && static_cast<T_addr>(lower->stop) >= newstart) {
+            const auto truncatedBytes = static_cast<T_addr>(lower->stop) - newstart;
             newstart = lower->stop;
 
             // Add the truncated bytes to the other end of the new segment
             newstop += truncatedBytes;
         }
 
-        if (upper && upper->start <= newstop) {
-            newstop = upper->start;
+        if (upper && static_cast<T_addr>(upper->start) <= newstop) {
+            newstop = static_cast<T_addr>(upper->start);
         }
 
-        const int segsize = newstop - newstart;
-        insertSegment(newstart, std::vector<uint8_t>(segsize, 0));
+        const auto segsize = newstop - newstart;
+        insertSegment(static_cast<T_addr>(newstart), std::vector<uint8_t>(segsize, 0));
     }
 
     void setMRUSeg(SegSPtr ptr) {

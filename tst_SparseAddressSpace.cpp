@@ -143,7 +143,7 @@ TEST_CASE("Test top") {
                            {((deadbeef >> 8) & 0xFF), 1},
                            {((deadbeef >> 16) & 0xFF), 1},
                            {((deadbeef >> 24) & 0xFF), 1},
-                           {s1_val, s1_size / 2 - sizeof(deadbeef)}});
+                           {s1_val, static_cast<int>(s1_size / 2 - sizeof(deadbeef))}});
         }
     }
 
@@ -195,13 +195,13 @@ TEST_CASE("Fuzz test") {
     // sequentially read through to very that the array was written as expected. This is performed with SASs of
     // different minimum segment sizes.
 
-    int datasize = GENERATE(std::pow(2, 1), std::pow(2, 3), std::pow(2, 5), std::pow(2, 7), std::pow(2, 10),
-                            std::pow(2, 15), std::pow(2, 17));
+    const int datasize = static_cast<int>(GENERATE(std::pow(2, 1), std::pow(2, 3), std::pow(2, 5), std::pow(2, 7),
+                                                   std::pow(2, 10), std::pow(2, 15), std::pow(2, 17)));
 
     // Min SS is based on the current data size. This is done to ensure that we are not testing very small minimum
     // segments with very large datasets, which will result in a heavily fragmented address space that is slow to
     // access.
-    int minss = datasize / 100;
+    int minss = static_cast<int>(datasize / 100);
     minss = minss < 3 ? 3 : minss;
     minss = minss % 2 == 0 ? minss + 1 : minss;
 
