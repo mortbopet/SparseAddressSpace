@@ -47,7 +47,12 @@ public:
          */
         T_interval toInterval() { return T_interval(start, end() + 1, this->shared_from_this()); }
         bool operator==(const Segment& other) const { return start == other.start && data == other.data; }
-        std::vector<uint8_t> data;
+
+        Segment& operator=(const Segment& other) {
+            start = other.start;
+            data = other.data;
+            return *this;
+        }        std::vector<uint8_t> data;
     };
 
     SparseAddressSpace(const unsigned minSegSize = 5) : m_minSegSize(minSegSize) {
