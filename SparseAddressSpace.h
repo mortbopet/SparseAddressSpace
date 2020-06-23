@@ -15,13 +15,21 @@ namespace sas {
 template <typename T_addr>
 class SparseAddressSpace {
 public:
+    /** @brief LargeInt
+     * Used in cases when checking and adjusting under/overflow within the T_addr range.
+     */
+    using LargeInt = long long;
+    static_assert(sizeof(LargeInt) > sizeof(T_addr),
+                  "Address type must be smaller than the internal large integer value.");
+    constexpr static LargeInt c_maxAddr = std::numeric_limits<T_addr>::max();
+
     struct Segment;
     using SegSPtr = std::shared_ptr<Segment>;
     using SegWPtr = std::weak_ptr<Segment>;
-    using T_interval = Interval<size_t, SegSPtr>;
+    using T_interval = Interval<LargeInt, SegSPtr>;
     using IntervalVector = std::vector<T_interval>;
-    using Range = std::pair<size_t, size_t>;
-    using SASData = IntervalTree<size_t, SegSPtr>;
+    using Range = std::pair<LargeInt, LargeInt>;
+    using SASData = IntervalTree<LargeInt, SegSPtr>;
     using SAS = SparseAddressSpace<T_addr>;
 
     /**
@@ -38,7 +46,7 @@ public:
         /**
          * @brief end: address of the last byte in this segment
          */
-        inline T_addr end() const { return static_cast<T_addr>(start + data.size() - 1); }
+        inline LargeInt end() const { return static_cast<LargeInt>(start) + data.size() - 1; }
         inline bool contains(const Segment& other) const { return start <= other.start && end() >= other.end(); }
         inline bool contains(const T_addr addr) const { return start <= addr && addr <= end(); }
 
@@ -47,7 +55,17 @@ public:
          * @returns an interval object of the given segment. Note that the end of the interval will point to the address
          * after the end() address. This is done to aid in coalescing adjacent blocks.
          */
-        T_interval toInterval() { return T_interval(start, end() + 1, toSPtr()); }
+        T_interval toInterval() {
+            // Edge case: if this segment reaches the top of the address space, we must truncate the interval within the
+            // range of T_addr. This is allowed due to the impossibility of coalescing segments out of bounds of the
+            // address space.
+            LargeInt realEnd = end() + 1;
+            if (realEnd > c_maxAddr) {
+                realEnd = c_maxAddr;
+            }
+            assert(realEnd >= start);
+            return T_interval(start, realEnd, toSPtr());
+        }
         SegSPtr toSPtr() { return this->shared_from_this(); }
         bool operator==(const Segment& other) const { return start == other.start && data == other.data; }
 
@@ -109,13 +127,10 @@ public:
 
     SegSPtr contains(uint32_t address) const {
         auto overlapping = data.findOverlapping(address, address);
-
         SegSPtr seg;
-
         if (overlapping.size() == 0) {
             return seg;
         }
-
         assert(overlapping.size() == 1);
 
         // Query the overlapping segment for whether contains the address. This is to avoid an off-by-1 error
@@ -165,6 +180,11 @@ public:
      * deleted.
      */
     void insertSegment(Segment& segment) {
+        if (segment.data.size() == 0) {
+            // Nothing to do
+            return;
+        }
+
         /** Struct wrapper around an interval pointer to ensure that std::set does not try to
          * overload resolve with an iterator*/
         std::set<SegSPtr> segmentsToKeep;
@@ -179,8 +199,8 @@ public:
 
         // Coalesce any overlapping upper and lower segments into the new segment. Address segment->end() + 1 ensures
         // coalescing of adjacent blocks
-        const std::vector<T_addr> edges = {segment.start, static_cast<T_addr>(segment.end() + 1)};
-        for (T_addr edgeAddress : edges) {
+        const std::vector<LargeInt> edges = {segment.start, segment.end() + 1};
+        for (LargeInt edgeAddress : edges) {
             std::vector<T_interval> overlaps = data.findOverlapping(edgeAddress, edgeAddress);
             for (auto& i : overlaps) {
                 segmentsToKeep.erase(i.value);
@@ -239,7 +259,7 @@ private:
         if (m_mruSegment && m_mruSegment->contains(addr)) {
             // MRU access
             seg = m_mruSegment;
-        } else if (seg = contains(addr)) {
+        } else if ((seg = contains(addr))) {
             return seg;
         } else {
             // No segment contains the requested address, create new segment and retry
@@ -283,10 +303,10 @@ private:
         // overlaps with the closest segments to the new segment, the new segment will adjusted accordingly (either
         // truncated or shifted wrt. the center address). We ensure that the bounds of the new segment is adjusted to
         // facilitate coalescing when inserted.
-        long long newstart = static_cast<long long>(addr) - m_minSegSize / 2;
+        LargeInt newstart = static_cast<LargeInt>(addr) - m_minSegSize / 2;
         const int adjustStart = newstart < 0 ? -newstart : 0;
         newstart += adjustStart;
-        long long newstop = addr + m_minSegSize / 2 + 1 + adjustStart;
+        LargeInt newstop = static_cast<LargeInt>(addr) + m_minSegSize / 2 + 1 + adjustStart;
 
         if (lower && static_cast<T_addr>(lower->stop) >= newstart) {
             const auto truncatedBytes = static_cast<T_addr>(lower->stop) - newstart;
@@ -299,8 +319,14 @@ private:
         if (upper && static_cast<T_addr>(upper->start) <= newstop) {
             newstop = static_cast<T_addr>(upper->start);
         }
-
-        const auto segsize = newstop - newstart;
+        if (newstop > c_maxAddr) {
+            // Truncate within address space. Newstop always points to the first address after the last byte of the new
+            // segment. In this case, this address is outside of the T_addr address space, however, the below adjustment
+            // of newstop ensures that we are able to allocate a segment up to and including the last address in the
+            // address space.
+            newstop = c_maxAddr + 1;
+        }
+        const int segsize = newstop - newstart;
         assert(segsize != 0);
         insertSegment(static_cast<T_addr>(newstart), std::vector<uint8_t>(segsize, 0));
     }
