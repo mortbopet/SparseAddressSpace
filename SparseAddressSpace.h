@@ -75,7 +75,9 @@ public:
 
     template <typename T_v>
     void writeValue(T_addr byteAddress, T_v value, size_t nbytes) {
-        assert(sizeof(value) <= nbytes);
+        if (nbytes > sizeof(value)) {
+            throw std::runtime_error("Trying to write more bytes than what is contained in @p value");
+        }
         for (unsigned i = 0; i < nbytes; i++) {
             writeByte(byteAddress++, value);
             value >>= CHAR_BIT;
@@ -132,22 +134,26 @@ public:
 
     void clear() {
         data = SASData();
-        m_initData.clear();
+        if (m_initData) {
+            m_initData->clear();
+        }
     }
 
     void reset() {
         data = SASData();
 
         // Deep copy all segments in the initialization data to the current data
-        m_initData->data.visit_all([=](const auto& interval) {
-            /*
-            Segment segCopy = *interval.value;
-            // Initialize the shared_ptr required for std::shared_from_this
-            SegSPtr segCopyPtr = std::make_shared<Segment>(segCopy);
-            */
-            SegSPtr segCopyPtr = std::make_shared<Segment>(*interval.value);
-            insertSegment(*segCopyPtr);
-        });
+        if (m_initData) {
+            m_initData->data.visit_all([=](const auto& interval) {
+                /*
+                Segment segCopy = *interval.value;
+                // Initialize the shared_ptr required for std::shared_from_this
+                SegSPtr segCopyPtr = std::make_shared<Segment>(segCopy);
+                */
+                SegSPtr segCopyPtr = std::make_shared<Segment>(*interval.value);
+                insertSegment(*segCopyPtr);
+            });
+        }
     }
 
     /**
@@ -278,8 +284,9 @@ private:
         // truncated or shifted wrt. the center address). We ensure that the bounds of the new segment is adjusted to
         // facilitate coalescing when inserted.
         long long newstart = static_cast<long long>(addr) - m_minSegSize / 2;
-        newstart = newstart < 0 ? 0 : newstart;
-        long long newstop = addr + m_minSegSize / 2 + 1;
+        const int adjustStart = newstart < 0 ? -newstart : 0;
+        newstart += adjustStart;
+        long long newstop = addr + m_minSegSize / 2 + 1 + adjustStart;
 
         if (lower && static_cast<T_addr>(lower->stop) >= newstart) {
             const auto truncatedBytes = static_cast<T_addr>(lower->stop) - newstart;
@@ -294,10 +301,11 @@ private:
         }
 
         const auto segsize = newstop - newstart;
+        assert(segsize != 0);
         insertSegment(static_cast<T_addr>(newstart), std::vector<uint8_t>(segsize, 0));
     }
 
-    void setMRUSeg(SegSPtr ptr) {
+    inline void setMRUSeg(SegSPtr ptr) {
         if (m_mruSegment != ptr) {
             m_mruSegment = ptr;
         }
