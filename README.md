@@ -6,8 +6,16 @@ Todo:
 - Coalescing
 - New segments/minimum segment size
 
+## How does it work?
+
+!["abc"](https://raw.githubusercontent.com/mortbopet/SparseAddressSpace/master/images/sas1.png)
+!["abc"](https://raw.githubusercontent.com/mortbopet/SparseAddressSpace/master/images/sas2.png)
+!["abc"](https://raw.githubusercontent.com/mortbopet/SparseAddressSpace/master/images/sas3.png)
+!["abc"](https://raw.githubusercontent.com/mortbopet/SparseAddressSpace/master/images/sas4.png)
+
+
 ### Usecase: Processor simulator
 
 Todo:
 * initialization memory
-* fd
+* 
