@@ -208,8 +208,8 @@ TEST_CASE("Initialization test") {
     auto s1 = createSegment(s1_start, s1_size, s1_val);
     auto s2 = createSegment(s2_start, s2_size, s2_val);
 
-    sas.addInitSegment(*s1);
-    sas.addInitSegment(*s2);
+    sas.getInitSas().insertSegment(*s1);
+    sas.getInitSas().insertSegment(*s2);
 
     // Verify that no segments have been written to the active SAS memory
     REQUIRE(sas.segments().size() == 0);

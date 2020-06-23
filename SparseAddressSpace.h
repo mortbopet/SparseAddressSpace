@@ -123,11 +123,11 @@ public:
         return seg->contains(address) ? seg : SegSPtr();
     }
 
-    void addInitSegment(Segment& other) {
+    SAS& getInitSas() {
         if (!m_initData) {
             m_initData = std::make_unique<SAS>();
         }
-        m_initData->insertSegment(other);
+        return *m_initData;
     }
 
     void clear() {
@@ -204,7 +204,7 @@ public:
         insertSegment(*s);
     }
 
-    void insertSegment(const T_addr startaddr, uint8_t* data, size_t n) {
+    void insertSegment(const T_addr startaddr, const uint8_t* data, size_t n) {
         insertSegment(startaddr, std::vector<uint8_t>(data, data + n));
     }
 
