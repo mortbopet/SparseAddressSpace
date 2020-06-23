@@ -8,12 +8,17 @@
 static constexpr int s_minsegsize = 5;
 using SAS = SparseAddressSpace<uint32_t>;
 using Seg = SAS::Segment;
+using SegSPtr = std::shared_ptr<Seg>;
 
-void addSegment(SAS& sas, uint32_t start, size_t size, int value) {
+SegSPtr createSegment(uint32_t start, size_t size, int value) {
     auto s = std::make_shared<Seg>();
     s->data = std::vector<uint8_t>(size, value);
     s->start = start;
-    sas.insertSegment(s);
+    return s;
+}
+
+void addSegment(SAS& sas, uint32_t start, size_t size, int value) {
+    sas.insertSegment(*createSegment(start, size, value));
 }
 
 void verifySegment(SAS::SegWPtr seg, uint32_t start, std::vector<std::pair<int, int>> expected) {
@@ -188,6 +193,60 @@ TEST_CASE("Test top") {
                            {s2_val, s1_size}});
         }
     }
+}
+
+TEST_CASE("Initialization test") {
+    static constexpr int s1_val = 1;
+    static constexpr int s1_size = 10;
+    static constexpr int s1_start = 10;
+    static constexpr int s2_val = 2;
+    static constexpr int s2_size = s1_size;
+    static constexpr int s2_start = s1_start + 2 * s1_size;
+    static constexpr int s3_val = 3;
+
+    SAS sas(s_minsegsize);
+    auto s1 = createSegment(s1_start, s1_size, s1_val);
+    auto s2 = createSegment(s2_start, s2_size, s2_val);
+
+    sas.addInitSegment(*s1);
+    sas.addInitSegment(*s2);
+
+    // Verify that no segments have been written to the active SAS memory
+    REQUIRE(sas.segments().size() == 0);
+
+    // Reset the SAS, writing initialization segments to active memory
+    sas.reset();
+
+    // verify that init segments are present in the SAS
+    auto seg1 = getSegmentAtAddr(sas, s1_start);
+    verifySegment(seg1, s1_start, {{s1_val, s1_size}});
+    auto seg2 = getSegmentAtAddr(sas, s2_start);
+    verifySegment(seg2, s2_start, {{s2_val, s2_size}});
+
+    // Overwrite SAS without inferring new segments at the start of s1 and end of s2 (but a new segment is inferred in
+    // between the two segments).
+    const uint32_t s3_start = s1_start;
+    const uint32_t s3_end = s2_start + s2_size;
+    const int s3_size = s3_end - s3_start;
+    uint32_t s3_wrptr = s3_start;
+    while (s3_wrptr < s3_end) {
+        sas.writeByte(s3_wrptr++, s3_val);
+    }
+
+    // Verify that SAS has been overwritten and now only has a single segment
+    auto seg3 = getExpectedSingleSegment(sas);
+    verifySegment(seg3, s3_start, {{s3_val, s3_size}});
+
+    // Verify that s1 and s2 are unmodified
+    verifySegment(s1, s1_start, {{s1_val, s1_size}});
+    verifySegment(s2, s2_start, {{s2_val, s2_size}});
+
+    // Reset SAS and verify that initial segments are now again present in SAS
+    sas.reset();
+    seg1 = getSegmentAtAddr(sas, s1_start);
+    verifySegment(seg1, s1_start, {{s1_val, s1_size}});
+    seg2 = getSegmentAtAddr(sas, s2_start);
+    verifySegment(seg2, s2_start, {{s2_val, s2_size}});
 }
 
 TEST_CASE("Fuzz test") {

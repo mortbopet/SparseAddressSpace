@@ -21,6 +21,8 @@ public:
     using T_interval = Interval<size_t, SegSPtr>;
     using IntervalVector = std::vector<T_interval>;
     using Range = std::pair<size_t, size_t>;
+    using SASData = IntervalTree<size_t, SegSPtr>;
+    using SAS = SparseAddressSpace<T_addr>;
 
     /**
      * @brief The Segment struct
@@ -45,14 +47,16 @@ public:
          * @returns an interval object of the given segment. Note that the end of the interval will point to the address
          * after the end() address. This is done to aid in coalescing adjacent blocks.
          */
-        T_interval toInterval() { return T_interval(start, end() + 1, this->shared_from_this()); }
+        T_interval toInterval() { return T_interval(start, end() + 1, toSPtr()); }
+        SegSPtr toSPtr() { return this->shared_from_this(); }
         bool operator==(const Segment& other) const { return start == other.start && data == other.data; }
 
         Segment& operator=(const Segment& other) {
             start = other.start;
             data = other.data;
             return *this;
-        }        std::vector<uint8_t> data;
+        }
+        std::vector<uint8_t> data;
     };
 
     SparseAddressSpace(const unsigned minSegSize = 5) : m_minSegSize(minSegSize) {
@@ -114,22 +118,30 @@ public:
         return seg->contains(address) ? seg : SegSPtr();
     }
 
-    void addInitSegment(const Segment& other) {
+    void addInitSegment(Segment& other) {
         if (!m_initData) {
-            m_initData = std::make_unique<SparseAddressSpace<T_addr>>();
+            m_initData = std::make_unique<SAS>();
         }
-        m_initData.insertSegment(other);
+        m_initData->insertSegment(other);
     }
 
-    void clearInitArrays() { m_initData.clear(); }
+    void clear() {
+        data = SASData();
+        m_initData.clear();
+    }
 
     void reset() {
-        data.clear();
+        data = SASData();
 
         // Deep copy all segments in the initialization data to the current data
-        m_initData.visit_all([=](const auto& interval) {
-            auto segCopy = std::make_unique<Segment>(interval->data);
-            insertSegment(segCopy);
+        m_initData->data.visit_all([=](const auto& interval) {
+            /*
+            Segment segCopy = *interval.value;
+            // Initialize the shared_ptr required for std::shared_from_this
+            SegSPtr segCopyPtr = std::make_shared<Segment>(segCopy);
+            */
+            SegSPtr segCopyPtr = std::make_shared<Segment>(*interval.value);
+            insertSegment(*segCopyPtr);
         });
     }
 
@@ -141,7 +153,7 @@ public:
      * start and stop address. Any segments contained within the newly inserted segment will be
      * deleted.
      */
-    void insertSegment(SegSPtr& segment) {
+    void insertSegment(Segment& segment) {
         /** Struct wrapper around an interval pointer to ensure that std::set does not try to
          * overload resolve with an iterator*/
         std::set<SegSPtr> segmentsToKeep;
@@ -149,19 +161,19 @@ public:
 
         // Locate segments which are fully contained within the new segment. These contained
         // segments shall be removed.
-        std::vector<T_interval> contained = data.findContained(segment->start, segment->end());
+        std::vector<T_interval> contained = data.findContained(segment.start, segment.end());
         for (auto& i : contained) {
             segmentsToKeep.erase(i.value);
         }
 
         // Coalesce any overlapping upper and lower segments into the new segment. Address segment->end() + 1 ensures
         // coalescing of adjacent blocks
-        const std::vector<T_addr> edges = {segment->start, static_cast<T_addr>(segment->end() + 1)};
+        const std::vector<T_addr> edges = {segment.start, static_cast<T_addr>(segment.end() + 1)};
         for (T_addr edgeAddress : edges) {
             std::vector<T_interval> overlaps = data.findOverlapping(edgeAddress, edgeAddress);
             for (auto& i : overlaps) {
                 segmentsToKeep.erase(i.value);
-                coalesce(i.value, segment);
+                coalesce(*i.value, segment);
             }
         }
 
@@ -172,19 +184,19 @@ public:
         }
 
         // Insert (coalesced) new segment into segments to keep
-        segmentsToKeepVec.push_back(segment->toInterval());
+        segmentsToKeepVec.push_back(segment.toInterval());
 
         // Rebuild the interval tree with the new set of (coalesced) intervals. std::move is used due to the r-value
         // reference constraint of the IntervalTree constructor
-        data = IntervalTree<size_t, SegSPtr>(std::move(segmentsToKeepVec));
-        setMRUSeg(segment);
+        data = SASData(std::move(segmentsToKeepVec));
+        setMRUSeg(segment.toSPtr());
     }
 
     void insertSegment(const T_addr startaddr, const std::vector<uint8_t>& data) {
         auto s = std::make_shared<Segment>();
         s->data = data;
         s->start = startaddr;
-        insertSegment(s);
+        insertSegment(*s);
     }
 
     void insertSegment(const T_addr startaddr, uint8_t* data, size_t n) {
@@ -208,7 +220,7 @@ private:
      */
     SegSPtr segmentForAddress(T_addr addr) const {
         // Physical changes to the SAS are performed through a non-const pointer to this
-        auto* thisNonConst = const_cast<SparseAddressSpace<T_addr>*>(this);
+        auto* thisNonConst = const_cast<SAS*>(this);
 
         SegSPtr seg;
         // Initially, check if MRU segment is our target segment, to speed up spatial locality accesses. Else, traverse
@@ -291,22 +303,22 @@ private:
      * Coalesce two segments, using values of @p s2 for any overlapping addresses between @p s1 and
      * @p s2.
      */
-    SegSPtr coalesce(SegSPtr s1, SegSPtr s2) {
-        if (s2->contains(*s1)) {
+    Segment& coalesce(Segment& s1, Segment& s2) {
+        if (s2.contains(s1)) {
             return s2;
         }
 
         // Coalesce lower
-        const int coalesce_lower_bytes = s2->start - s1->start;
+        const int coalesce_lower_bytes = s2.start - s1.start;
         if (coalesce_lower_bytes > 0) {
-            s2->data.insert(s2->data.begin(), s1->data.begin(), s1->data.begin() + coalesce_lower_bytes);
-            s2->start = s1->start;
+            s2.data.insert(s2.data.begin(), s1.data.begin(), s1.data.begin() + coalesce_lower_bytes);
+            s2.start = s1.start;
         }
 
         // Coalesce upper
-        const int coalesce_upper_bytes = s1->end() - s2->end();
+        const int coalesce_upper_bytes = s1.end() - s2.end();
         if (coalesce_upper_bytes > 0) {
-            s2->data.insert(s2->data.end(), s1->data.end() - coalesce_upper_bytes, s1->data.end());
+            s2.data.insert(s2.data.end(), s1.data.end() - coalesce_upper_bytes, s1.data.end());
         }
 
         return s2;
@@ -314,15 +326,15 @@ private:
 
     /**
      * @brief m_initData
-     * Set of SAS structures representing the segments which will be written to this SAS upon datastructure reset.
+     * SAS representing the segments which will be written to this SAS upon datastructure reset.
      */
-    std::unique_ptr<SparseAddressSpace<T_addr>> m_initData;
+    std::unique_ptr<SAS> m_initData;
 
     /**
      * @brief data
      * Interval tree representing the currently active segments in the address space.
      */
-    IntervalTree<size_t, SegSPtr> data;
+    SASData data;
 
     /**
      * @brief m_mruSegment
