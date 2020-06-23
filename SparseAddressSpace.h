@@ -74,12 +74,17 @@ public:
     }
 
     template <typename T_v>
-    void writeValue(T_addr byteAddress, T_v value) {
-        const size_t bytes = sizeof(T_v);
-        for (unsigned i = 0; i < bytes; i++) {
+    void writeValue(T_addr byteAddress, T_v value, size_t nbytes) {
+        assert(sizeof(value) <= nbytes);
+        for (unsigned i = 0; i < nbytes; i++) {
             writeByte(byteAddress++, value);
             value >>= CHAR_BIT;
         }
+    }
+
+    template <typename T_v>
+    void writeValue(T_addr byteAddress, T_v value) {
+        writeValue(byteAddress, value, sizeof(T_v));
     }
 
     uint8_t readByte(T_addr address) const {
